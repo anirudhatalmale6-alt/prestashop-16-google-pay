@@ -570,10 +570,12 @@ class GooglePayStripe extends PaymentModule
                 'validationUrl'  => $this->context->link->getModuleLink($this->name, 'validation', array(), true),
                 'idCart'         => (int)$cart->id,
                 'testMode'       => (bool)Configuration::get('GPS_TEST_MODE'),
+                // t() not l(): these are written into the DOM with textContent,
+                // so they must be plain text, not HTML-escaped entities.
                 'i18n'           => array(
-                    'generic'    => $this->l('The payment could not be completed. Please try again or choose another payment method.'),
-                    'network'    => $this->l('We could not reach the payment server. Please check your connection and try again.'),
-                    'processing' => $this->l('Processing your payment, please do not close this page...'),
+                    'generic'    => $this->t('The payment could not be completed. Please try again or choose another payment method.'),
+                    'network'    => $this->t('We could not reach the payment server. Please check your connection and try again.'),
+                    'processing' => $this->t('Processing your payment, please do not close this page...'),
                 ),
             ),
         ));

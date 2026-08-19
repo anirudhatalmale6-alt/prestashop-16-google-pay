@@ -228,7 +228,39 @@ Turn on **Debug log** in the module configuration to write each payment step to
 
 ---
 
-## 11. What is not included
+## 11. Language
+
+Everything a customer can see is translated into Slovenian:
+
+- `translations/si.php` — for shops whose language ISO code is `si`
+- `translations/sl.php` — identical file, for shops using the standard `sl` code
+
+Both are shipped so the translation works whichever code the shop uses. PrestaShop picks
+the file matching the active language's ISO code and ignores the other.
+
+Back office labels (the configuration screen) are deliberately left in English. Only the
+merchant sees those, and only during setup.
+
+To change any wording, edit the Slovenian string on the right-hand side of the `=` in
+`translations/si.php` **and** `translations/sl.php`. Do not touch the long key on the left
+— it is an MD5 of the English source string and PrestaShop uses it to find the translation.
+
+Strings a customer can see:
+
+| English | Slovenian |
+|---|---|
+| Pay with Google Pay | Plačilo z Google Pay |
+| TEST MODE | TESTNI NAČIN |
+| Pay in a couple of taps with the card saved in your Google account… | Plačajte z nekaj dotiki s kartico, shranjeno v vašem Google računu… |
+| Payment confirmed | Plačilo potrjeno |
+| Thank you. Your payment with Google Pay was accepted. | Hvala. Vaše plačilo z Google Pay je bilo sprejeto. |
+| Order reference: | Referenca naročila: |
+| Amount paid: | Plačani znesek: |
+| Paid with: | Plačano z: |
+
+---
+
+## 12. What is not included
 
 - Refunds from the PrestaShop back office. Refund from the Stripe dashboard; it is one
   click there and the money returns to the shopper's card either way.
