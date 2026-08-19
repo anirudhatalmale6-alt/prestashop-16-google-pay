@@ -1,0 +1,86 @@
+/* Google Pay block on the PrestaShop 1.6 payment step.
+   Kept deliberately plain so it inherits the shop theme rather than fighting it. */
+
+.gps-payment-module {
+	border: 1px solid #d6d4d4;
+	border-radius: 3px;
+	padding: 18px 20px;
+	margin-bottom: 15px;
+	background: #fff;
+}
+
+.gps-heading {
+	margin-bottom: 6px;
+}
+
+.gps-title {
+	font-weight: 700;
+	font-size: 15px;
+	color: #333;
+	vertical-align: middle;
+}
+
+.gps-badge-test {
+	display: inline-block;
+	margin-left: 10px;
+	padding: 2px 8px;
+	border-radius: 3px;
+	background: #fbb03b;
+	color: #fff;
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.5px;
+	vertical-align: middle;
+}
+
+.gps-subtitle {
+	color: #777;
+	font-size: 13px;
+	margin: 0 0 14px 0;
+	line-height: 1.4;
+}
+
+#gps-button {
+	max-width: 320px;
+}
+
+.gps-processing {
+	margin-top: 12px;
+	font-size: 13px;
+	color: #555;
+}
+
+.gps-spinner {
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	margin-right: 8px;
+	vertical-align: -2px;
+	border: 2px solid #ccc;
+	border-top-color: #555;
+	border-radius: 50%;
+	animation: gps-spin 0.8s linear infinite;
+}
+
+@keyframes gps-spin {
+	to { transform: rotate(360deg); }
+}
+
+.gps-inline-error,
+.gps-alert {
+	margin-top: 12px;
+	margin-bottom: 0;
+	font-size: 13px;
+}
+
+/* On narrow screens the button should use the full width — that is where
+   most Google Pay traffic comes from. */
+@media (max-width: 767px) {
+	#gps-button {
+		max-width: none;
+	}
+
+	.gps-payment-module {
+		padding: 14px 15px;
+	}
+}
