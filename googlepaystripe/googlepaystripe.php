@@ -62,7 +62,7 @@ class GooglePayStripe extends PaymentModule
     {
         $this->name = 'googlepaystripe';
         $this->tab = 'payments_gateways';
-        $this->version = '1.0.1';
+        $this->version = '1.0.2';
         $this->author = 'Anirudha Talmale';
         // Must be 1 for a payment module. With 0, Module::getModulesOnDisk()
         // builds the object straight from config.xml, which carries no
@@ -335,6 +335,20 @@ class GooglePayStripe extends PaymentModule
     }
 
     /**
+     * Records what the payment hook did the last time the checkout called it.
+     * One Configuration row, overwritten each time, so the merchant can read it
+     * in the back office without needing FTP or server log access.
+     *
+     * Returns null so it can be used directly in `return $this->noteHookState(...)`.
+     */
+    protected function noteHookState($state)
+    {
+        Configuration::updateValue('GPS_LAST_HOOK', date('Y-m-d H:i:s').' — '.$state);
+
+        return null;
+    }
+
+    /**
      * Reproduces, one by one, the joins in Module::getPaymentModules() plus the
      * module's own currency test — the four ways a payment module can vanish
      * from the checkout without printing a single error.
@@ -466,6 +480,123 @@ class GooglePayStripe extends PaymentModule
             'hint'  => $hook_ok
                 ? $this->t('The checkout will ask this module for its payment option.')
                 : $this->t('Reinstall the module — it is not attached to the payment step.'),
+        );
+
+        // 5. Enabled. Installed but disabled is a perfectly normal state and
+        //    looks identical from the checkout: nothing appears.
+        $out[] = array(
+            'label' => $this->t('Module enabled'),
+            'ok'    => (bool)$this->active,
+            'hint'  => $this->active
+                ? $this->t('The module is switched on.')
+                : $this->t('The module is installed but switched off. Enable it in Modules and Services.'),
+        );
+
+        // 6. Attached to this shop. Missing here and the core checkout query
+        //    drops the module even though everything else looks right.
+        $shop_ok = (bool)$db->getValue(
+            'SELECT `id_module` FROM `'._DB_PREFIX_.'module_shop`
+             WHERE `id_module` = '.$id_module.' AND `id_shop` = '.$id_shop
+        );
+        $out[] = array(
+            'label' => $this->t('Available in this shop'),
+            'ok'    => $shop_ok,
+            'hint'  => $shop_ok
+                ? $this->t('The module is attached to this shop.')
+                : $this->t('The module is not attached to this shop. Reinstall it.'),
+        );
+
+        // 7. The advanced payment API replaces the normal payment hook with a
+        //    different one. A module that only implements the normal hook — like
+        //    this one, and like the stock bank wire module — never appears.
+        $advanced_api = (bool)Configuration::get('PS_ADVANCED_PAYMENT_API');
+        $out[] = array(
+            'label' => $this->t('Standard payment step (advanced payment API off)'),
+            'ok'    => !$advanced_api,
+            'hint'  => $advanced_api
+                ? $this->t('The advanced payment API is on. It uses a different hook, so this module cannot appear. Turn it off, or tell me and I will add support for it.')
+                : $this->t('Your checkout uses the standard payment step.'),
+        );
+
+        // 8. Devices. PrestaShop keeps a per-device bitmask on the module and ANDs
+        //    it against the shopper's device: 1 desktop, 2 tablet, 4 mobile. Miss
+        //    a bit and the module is invisible on that device only, which looks
+        //    like a browser problem rather than a setting.
+        $device_mask = (int)$db->getValue(
+            'SELECT `enable_device` FROM `'._DB_PREFIX_.'module_shop`
+             WHERE `id_module` = '.$id_module.' AND `id_shop` = '.$id_shop
+        );
+        $device_names = array(1 => $this->t('desktop'), 2 => $this->t('tablet'), 4 => $this->t('mobile'));
+        $missing_devices = array();
+        foreach ($device_names as $bit => $device_name) {
+            if (!($device_mask & $bit)) {
+                $missing_devices[] = $device_name;
+            }
+        }
+        $out[] = array(
+            'label' => $this->t('Enabled on desktop, tablet and mobile'),
+            'ok'    => !count($missing_devices),
+            'hint'  => count($missing_devices)
+                ? sprintf(
+                    $this->t('Hidden on: %s. Google Pay matters most on mobile, so this one is worth fixing.'),
+                    implode(', ', $missing_devices)
+                )
+                : $this->t('Visible on every device.'),
+        );
+
+        // 9. The whole thing at once. This mirrors Hook::getHookModuleExecList(),
+        //    which is what actually decides whether the payment step ever calls
+        //    this module — NOT Module::getPaymentModules(), which is a different
+        //    query with a different set of filters.
+        //    Currency is part of THIS one: an unticked currency stops the hook
+        //    being called at all, so the module never gets to explain itself and
+        //    "Last checkout result" below stays frozen on an older run.
+        // Already cast to int when they were read, so safe to interpolate.
+        $group_sql = count($group_ids) ? implode(', ', array_map('intval', $group_ids)) : '0';
+        $id_country_ctx = (int)Configuration::get('PS_COUNTRY_DEFAULT');
+        $id_currency_ctx = (int)Configuration::get('PS_CURRENCY_DEFAULT');
+
+        $survives = (bool)$db->getValue(
+            'SELECT m.`id_module`
+             FROM `'._DB_PREFIX_.'module` m
+             INNER JOIN `'._DB_PREFIX_.'module_shop` ms
+               ON (ms.`id_module` = m.`id_module` AND ms.`id_shop` = '.$id_shop.')
+             INNER JOIN `'._DB_PREFIX_.'hook_module` hm ON hm.`id_module` = m.`id_module`
+             INNER JOIN `'._DB_PREFIX_.'hook` h ON hm.`id_hook` = h.`id_hook`
+             LEFT JOIN `'._DB_PREFIX_.'module_group` mg
+               ON (mg.`id_module` = m.`id_module` AND mg.`id_shop` = '.$id_shop.')
+             WHERE m.`id_module` = '.$id_module.'
+               AND h.`name` = "displayPayment"
+               AND hm.`id_shop` = '.$id_shop.'
+               AND (SELECT `id_country` FROM `'._DB_PREFIX_.'module_country` mc
+                    WHERE mc.`id_module` = m.`id_module` AND mc.`id_country` = '.$id_country_ctx.'
+                      AND mc.`id_shop` = '.$id_shop.' LIMIT 1) = '.$id_country_ctx.'
+               AND (SELECT `id_currency` FROM `'._DB_PREFIX_.'module_currency` mcr
+                    WHERE mcr.`id_module` = m.`id_module`
+                      AND mcr.`id_currency` IN ('.$id_currency_ctx.', -1, -2) LIMIT 1)
+                   IN ('.$id_currency_ctx.', -1, -2)
+               AND mg.`id_group` IN ('.$group_sql.')'
+        );
+
+        $out[] = array(
+            'label' => $this->t('PrestaShop will call this module at the payment step'),
+            'ok'    => $survives,
+            'hint'  => $survives
+                ? $this->t('For your default country and currency, the checkout will ask this module for its button.')
+                : $this->t('PrestaShop filters this module out before asking it for anything. One of the checks above is the reason: country, currency, group, shop or hook.'),
+        );
+
+        // 9. What actually happened last time a customer reached the payment
+        //    step. This is the one that ends the guessing.
+        $last = Configuration::get('GPS_LAST_HOOK');
+        $out[] = array(
+            'label'  => $this->t('Last checkout result'),
+            'ok'     => $last ? (Tools::strpos($last, 'shown:') !== false) : false,
+            // Always shown: this line is the diagnosis, not a warning.
+            'always' => true,
+            'hint'   => $last
+                ? $last
+                : $this->t('The payment step has not called this module even once yet. Load the checkout payment step, then reload this page.'),
         );
 
         return $out;
@@ -671,21 +802,42 @@ class GooglePayStripe extends PaymentModule
 
     public function hookPayment($params)
     {
-        if (!$this->active || !$this->isConfigured()) {
-            return;
+        // Every exit below records why, so the configuration page can say what
+        // happened on the last real checkout instead of the merchant and I
+        // trading screenshots. If the recorded time never moves, the hook was
+        // never called at all and the cause is upstream, in PrestaShop's own
+        // filtering — which is a different problem entirely.
+        if (!$this->active) {
+            return $this->noteHookState('skipped: the module is disabled');
+        }
+
+        if (!$this->isConfigured()) {
+            return $this->noteHookState(
+                'skipped: no Stripe '.($this->isTestMode() ? 'test' : 'live').' keys saved for the selected mode'
+            );
         }
 
         $cart = $this->context->cart;
-        if (!Validate::isLoadedObject($cart) || !$this->checkCurrency($cart)) {
-            return;
+        if (!Validate::isLoadedObject($cart)) {
+            return $this->noteHookState('skipped: no cart in the customer session');
+        }
+
+        if (!$this->checkCurrency($cart)) {
+            $cart_currency = new Currency((int)$cart->id_currency);
+            return $this->noteHookState(sprintf(
+                'skipped: cart currency %s is not enabled for this module in Currency restrictions',
+                Validate::isLoadedObject($cart_currency) ? $cart_currency->iso_code : (int)$cart->id_currency
+            ));
         }
 
         // Google Pay is a card wallet: it cannot pay for a zero total, and a
         // cart still missing an address or carrier is not payable yet.
         $total = $this->getCartTotal($cart);
         if ($total <= 0) {
-            return;
+            return $this->noteHookState('skipped: cart total is '.(float)$total);
         }
+
+        $this->noteHookState('shown: button block rendered, cart total '.(float)$total);
 
         $currency = new Currency((int)$cart->id_currency);
         $title = Configuration::get('GPS_TITLE', (int)$this->context->language->id);

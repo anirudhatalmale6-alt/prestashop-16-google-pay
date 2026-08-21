@@ -27,7 +27,9 @@
 					</td>
 					<td>
 						<strong>{$check.label|escape:'html':'UTF-8'}</strong>
-						{if !$check.ok}
+						{* Failing rows explain themselves. A row flagged "always"
+						   carries information worth reading even when it passes. *}
+						{if !$check.ok || (isset($check.always) && $check.always)}
 							<div class="help-block" style="margin:4px 0 0 0;">{$check.hint|escape:'html':'UTF-8'}</div>
 						{/if}
 					</td>
