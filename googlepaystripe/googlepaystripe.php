@@ -62,9 +62,13 @@ class GooglePayStripe extends PaymentModule
     {
         $this->name = 'googlepaystripe';
         $this->tab = 'payments_gateways';
-        $this->version = '1.0.0';
+        $this->version = '1.0.1';
         $this->author = 'Anirudha Talmale';
-        $this->need_instance = 0;
+        // Must be 1 for a payment module. With 0, Module::getModulesOnDisk()
+        // builds the object straight from config.xml, which carries no
+        // currencies/currencies_mode, so AdminPayment renders "--" instead of
+        // the currency checkboxes and the merchant cannot manage them at all.
+        $this->need_instance = 1;
         $this->ps_versions_compliancy = array('min' => '1.6.0.0', 'max' => '1.6.99.99');
         $this->bootstrap = true;
 
@@ -312,18 +316,13 @@ class GooglePayStripe extends PaymentModule
             'hint'  => $this->t('Optional but recommended. It lets Stripe confirm an order even if the customer closes the browser.'),
         );
 
-        // In the back office there is no customer cart, so ask about the shop
-        // default currency instead of dereferencing a null cart.
-        $currencies_ok = false;
-        $module_currencies = $this->getCurrency((int)Configuration::get('PS_CURRENCY_DEFAULT'));
-        if (is_array($module_currencies) && count($module_currencies)) {
-            $currencies_ok = true;
+        // These four are the filters PrestaShop itself applies in
+        // Module::getPaymentModules(). If any one of them fails the module is
+        // dropped from the checkout silently — no error anywhere — so they are
+        // reported here rather than left for the merchant to guess at.
+        foreach ($this->getVisibilityChecks() as $check) {
+            $checks[] = $check;
         }
-        $checks[] = array(
-            'label' => $this->t('At least one currency enabled for this module'),
-            'ok'    => $currencies_ok,
-            'hint'  => $this->t('Set this in the Currency restrictions panel further down this page.'),
-        );
 
         $this->context->smarty->assign(array(
             'gps_checks'       => $checks,
@@ -333,6 +332,143 @@ class GooglePayStripe extends PaymentModule
         ));
 
         return $this->display(__FILE__, 'views/templates/hook/admin_status.tpl');
+    }
+
+    /**
+     * Reproduces, one by one, the joins in Module::getPaymentModules() plus the
+     * module's own currency test — the four ways a payment module can vanish
+     * from the checkout without printing a single error.
+     *
+     * Written for the merchant, not for a developer: each failure says which
+     * panel on this page fixes it.
+     */
+    protected function getVisibilityChecks()
+    {
+        $out = array();
+        $id_module = (int)$this->id;
+        $id_shop = (int)$this->context->shop->id;
+        $id_lang = (int)$this->context->language->id;
+        $db = Db::getInstance();
+
+        if (!$id_module) {
+            return $out;
+        }
+
+        // 1. Countries. PrestaShop matches the customer's INVOICE address
+        //    country against this list.
+        $country_ids = array();
+        $rows = $db->executeS(
+            'SELECT `id_country` FROM `'._DB_PREFIX_.'module_country`
+             WHERE `id_module` = '.$id_module.' AND `id_shop` = '.$id_shop
+        );
+        if (is_array($rows)) {
+            foreach ($rows as $row) {
+                $country_ids[] = (int)$row['id_country'];
+            }
+        }
+
+        $missing_countries = array();
+        $active_countries = Country::getCountries($id_lang, true);
+        if (is_array($active_countries)) {
+            foreach ($active_countries as $country) {
+                if (!in_array((int)$country['id_country'], $country_ids)) {
+                    $missing_countries[] = $country['name'];
+                }
+            }
+        }
+
+        if (count($missing_countries)) {
+            $hint = sprintf(
+                $this->t('Not allowed for: %s. Customers with an invoice address there will not see the button. Fix it in Country restrictions further down this page.'),
+                implode(', ', array_slice($missing_countries, 0, 12)).(count($missing_countries) > 12 ? '...' : '')
+            );
+        } else {
+            $hint = $this->t('Every country you have enabled in the shop is allowed for this module.');
+        }
+
+        $out[] = array(
+            'label' => $this->t('Allowed in every enabled country'),
+            'ok'    => !count($missing_countries),
+            'hint'  => $hint,
+        );
+
+        // 2. Customer groups. This one is an INNER JOIN in the core query, so a
+        //    module with no group rows at all disappears for everybody.
+        $group_ids = array();
+        $rows = $db->executeS(
+            'SELECT `id_group` FROM `'._DB_PREFIX_.'module_group`
+             WHERE `id_module` = '.$id_module.' AND `id_shop` = '.$id_shop
+        );
+        if (is_array($rows)) {
+            foreach ($rows as $row) {
+                $group_ids[] = (int)$row['id_group'];
+            }
+        }
+
+        $missing_groups = array();
+        $all_groups = Group::getGroups($id_lang);
+        if (is_array($all_groups)) {
+            foreach ($all_groups as $group) {
+                if (!in_array((int)$group['id_group'], $group_ids)) {
+                    $missing_groups[] = $group['name'];
+                }
+            }
+        }
+
+        $out[] = array(
+            'label' => $this->t('Allowed for every customer group'),
+            'ok'    => count($group_ids) > 0 && !count($missing_groups),
+            'hint'  => count($missing_groups)
+                ? sprintf(
+                    $this->t('Not allowed for: %s. Customers in those groups will not see the button. Fix it in Group restrictions further down this page.'),
+                    implode(', ', $missing_groups)
+                )
+                : $this->t('Every customer group can use this payment method.'),
+        );
+
+        // 3. Currency. Checked by the module itself against the cart currency.
+        $currency_isos = array();
+        $rows = $db->executeS(
+            'SELECT c.`iso_code` FROM `'._DB_PREFIX_.'module_currency` mc
+             INNER JOIN `'._DB_PREFIX_.'currency` c ON c.`id_currency` = mc.`id_currency`
+             WHERE mc.`id_module` = '.$id_module.' AND mc.`id_shop` = '.$id_shop
+        );
+        if (is_array($rows)) {
+            foreach ($rows as $row) {
+                $currency_isos[] = $row['iso_code'];
+            }
+        }
+
+        $default_currency = new Currency((int)Configuration::get('PS_CURRENCY_DEFAULT'));
+        $default_iso = Validate::isLoadedObject($default_currency) ? $default_currency->iso_code : '';
+        $currency_ok = $default_iso !== '' && in_array($default_iso, $currency_isos);
+
+        $out[] = array(
+            'label' => sprintf($this->t('Shop currency (%s) enabled for this module'), $default_iso),
+            'ok'    => $currency_ok,
+            'hint'  => $currency_ok
+                ? sprintf($this->t('Enabled for: %s.'), implode(', ', $currency_isos))
+                : $this->t('The cart currency must be enabled in Currency restrictions further down this page, or the button stays hidden.'),
+        );
+
+        // 4. The payment hook itself. Without this row the checkout never even
+        //    asks the module for anything.
+        $hook_ok = (bool)$db->getValue(
+            'SELECT hm.`id_module` FROM `'._DB_PREFIX_.'hook_module` hm
+             INNER JOIN `'._DB_PREFIX_.'hook` h ON h.`id_hook` = hm.`id_hook`
+             WHERE hm.`id_module` = '.$id_module.' AND hm.`id_shop` = '.$id_shop.'
+               AND h.`name` IN ("displayPayment", "payment")'
+        );
+
+        $out[] = array(
+            'label' => $this->t('Registered on the checkout payment hook'),
+            'ok'    => $hook_ok,
+            'hint'  => $hook_ok
+                ? $this->t('The checkout will ask this module for its payment option.')
+                : $this->t('Reinstall the module — it is not attached to the payment step.'),
+        );
+
+        return $out;
     }
 
     protected function renderForm()
