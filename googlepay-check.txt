@@ -1,0 +1,58 @@
+GOOGLE PAY DIAGNOSTIC - what to do
+=================================
+
+1. Open your shop in Chrome and go to the payment step of checkout
+   (the page where you saw PayPal and bank transfer)
+
+2. Press F12 on your keyboard. A panel opens on the side or bottom.
+
+3. Click the tab called "Console" at the top of that panel.
+
+4. Click once in the empty area next to the > sign.
+
+5. IMPORTANT - Chrome will probably refuse to paste and show a warning
+   asking you to type something first. If that happens, type these two
+   words and press Enter:
+
+       allow pasting
+
+6. Now copy EVERYTHING between the two lines below, paste it into the
+   console, and press Enter.
+
+7. Screenshot whatever it prints and send it to me.
+
+
+------------------------- COPY FROM HERE -------------------------
+(function () {
+  var b = document.getElementById('gps-block');
+  var c = window.gpsConfig;
+  console.log('--- GOOGLE PAY CHECK ---');
+  console.log('1. Payment block in page ....... ' + (b ? 'YES' : 'NO'));
+  console.log('2. Module config present ....... ' + (c ? 'YES' : 'NO'));
+  console.log('3. Stripe.js loaded ............ ' + (typeof window.Stripe === 'function' ? 'YES' : 'NO'));
+  if (c) {
+    console.log('4. country=' + c.country + ' currency=' + c.currency + ' amount=' + c.amount);
+  } else {
+    console.log('4. no config to read');
+  }
+  if (c && typeof window.Stripe === 'function') {
+    var s = window.Stripe(c.publishableKey);
+    var pr = s.paymentRequest({
+      country: c.country,
+      currency: c.currency,
+      total: { label: 'check', amount: c.amount || 100 }
+    });
+    pr.canMakePayment().then(function (r) {
+      console.log('5. Browser wallet check ........ ' + (r ? JSON.stringify(r) : 'NULL - no wallet available'));
+    }).catch(function (e) {
+      console.log('5. Wallet check ERROR .......... ' + e.message);
+    });
+  } else {
+    console.log('5. skipped, cannot run');
+  }
+})();
+-------------------------- TO HERE --------------------------------
+
+
+Also useful: before running it, look at the Console for any red
+error lines and include those in the screenshot too.

@@ -73,6 +73,24 @@
 	font-size: 13px;
 }
 
+/* Advanced payment step. The theme has already drawn a bordered option box
+   directly above this block, so a second border here would read as two
+   separate panels. Sit flush underneath it instead. */
+.gps-advanced .gps-payment-module {
+	border: none;
+	border-radius: 0;
+	padding: 0 0 10px 0;
+	margin-bottom: 0;
+}
+
+.gps-advanced .gps-heading {
+	margin-bottom: 10px;
+}
+
+.gps-advanced .gps-subtitle {
+	margin-bottom: 12px;
+}
+
 /* On narrow screens the button should use the full width — that is where
    most Google Pay traffic comes from. */
 @media (max-width: 767px) {

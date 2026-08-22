@@ -73,3 +73,9 @@ $_MODULE['<{googlepaystripe}prestashop>googlepaystripe_23adcd86889d978336f3ed25f
 
 // Adds a Google Pay button to your checkout. Payments are processed by Stripe, so card data never reaches your server.
 $_MODULE['<{googlepaystripe}prestashop>googlepaystripe_fdb96e193327f25bf8a698db7a534f73'] = 'Doda gumb Google Pay v vašo blagajno. Plačila obdeluje Stripe, zato podatki o kartici nikoli ne pridejo na vaš strežnik.';
+
+// Please accept the terms of service first, then tap the Google Pay button.
+$_MODULE['<{googlepaystripe}prestashop>googlepaystripe_9f7237a31865709facbcbc4e4f266aaf'] = 'Najprej sprejmite pogoje poslovanja, nato pritisnite gumb Google Pay.';
+
+// Tap the Google Pay button above to complete your payment.
+$_MODULE['<{googlepaystripe}prestashop>googlepaystripe_7ba74ff990425dc1a2b9a8f1df6ce7e3'] = 'Za dokončanje plačila pritisnite zgornji gumb Google Pay.';

@@ -62,7 +62,7 @@ class GooglePayStripe extends PaymentModule
     {
         $this->name = 'googlepaystripe';
         $this->tab = 'payments_gateways';
-        $this->version = '1.0.2';
+        $this->version = '1.0.3';
         $this->author = 'Anirudha Talmale';
         // Must be 1 for a payment module. With 0, Module::getModulesOnDisk()
         // builds the object straight from config.xml, which carries no
@@ -127,6 +127,13 @@ class GooglePayStripe extends PaymentModule
             }
         }
 
+        // The advanced payment API (switched on by the Advanced EU Compliance
+        // module) renders a completely different payment step that never calls
+        // the normal payment hook. Registering both means the module works
+        // whichever one the shop uses, and keeps working if the merchant turns
+        // EU compliance on later.
+        $this->registerHook('advancedPaymentOptions');
+
         return $this->installDb();
     }
 
@@ -178,6 +185,11 @@ class GooglePayStripe extends PaymentModule
     public function getContent()
     {
         $output = '';
+
+        // Belt and braces alongside upgrade-1.0.3.php: a shop that was already
+        // running an older version gets the advanced hook the moment the
+        // merchant opens this page, even if the upgrade script never fired.
+        $this->ensureAdvancedHook();
 
         if (Tools::isSubmit('submit'.$this->name)) {
             $output .= $this->postProcess();
@@ -466,16 +478,24 @@ class GooglePayStripe extends PaymentModule
         );
 
         // 4. The payment hook itself. Without this row the checkout never even
-        //    asks the module for anything.
+        //    asks the module for anything. Which hook counts depends on which
+        //    payment step the shop runs, so check the one actually in use.
+        $advanced_api = (bool)Configuration::get('PS_ADVANCED_PAYMENT_API');
+        $hook_names = $advanced_api
+            ? '"advancedPaymentOptions"'
+            : '"displayPayment", "payment"';
+
         $hook_ok = (bool)$db->getValue(
             'SELECT hm.`id_module` FROM `'._DB_PREFIX_.'hook_module` hm
              INNER JOIN `'._DB_PREFIX_.'hook` h ON h.`id_hook` = hm.`id_hook`
              WHERE hm.`id_module` = '.$id_module.' AND hm.`id_shop` = '.$id_shop.'
-               AND h.`name` IN ("displayPayment", "payment")'
+               AND h.`name` IN ('.$hook_names.')'
         );
 
         $out[] = array(
-            'label' => $this->t('Registered on the checkout payment hook'),
+            'label' => $advanced_api
+                ? $this->t('Registered on the advanced checkout payment hook')
+                : $this->t('Registered on the checkout payment hook'),
             'ok'    => $hook_ok,
             'hint'  => $hook_ok
                 ? $this->t('The checkout will ask this module for its payment option.')
@@ -506,16 +526,18 @@ class GooglePayStripe extends PaymentModule
                 : $this->t('The module is not attached to this shop. Reinstall it.'),
         );
 
-        // 7. The advanced payment API replaces the normal payment hook with a
-        //    different one. A module that only implements the normal hook — like
-        //    this one, and like the stock bank wire module — never appears.
-        $advanced_api = (bool)Configuration::get('PS_ADVANCED_PAYMENT_API');
+        // 7. Which payment step this shop runs. Both are supported, so this row
+        //    is information rather than a fault — but it decides which hook has
+        //    to be attached, so it is worth stating plainly.
         $out[] = array(
-            'label' => $this->t('Standard payment step (advanced payment API off)'),
-            'ok'    => !$advanced_api,
-            'hint'  => $advanced_api
-                ? $this->t('The advanced payment API is on. It uses a different hook, so this module cannot appear. Turn it off, or tell me and I will add support for it.')
-                : $this->t('Your checkout uses the standard payment step.'),
+            'label'  => $advanced_api
+                ? $this->t('Checkout uses the advanced payment step')
+                : $this->t('Checkout uses the standard payment step'),
+            'ok'     => true,
+            'always' => true,
+            'hint'   => $advanced_api
+                ? $this->t('The advanced payment API is on, normally because the Advanced EU Compliance module is installed. That step ignores the normal payment hook, so this module supplies a payment option instead. Supported since version 1.0.3.')
+                : $this->t('The standard payment step calls the normal payment hook.'),
         );
 
         // 8. Devices. PrestaShop keeps a per-device bitmask on the module and ANDs
@@ -566,7 +588,7 @@ class GooglePayStripe extends PaymentModule
              LEFT JOIN `'._DB_PREFIX_.'module_group` mg
                ON (mg.`id_module` = m.`id_module` AND mg.`id_shop` = '.$id_shop.')
              WHERE m.`id_module` = '.$id_module.'
-               AND h.`name` = "displayPayment"
+               AND h.`name` = "'.($advanced_api ? 'advancedPaymentOptions' : 'displayPayment').'"
                AND hm.`id_shop` = '.$id_shop.'
                AND (SELECT `id_country` FROM `'._DB_PREFIX_.'module_country` mc
                     WHERE mc.`id_module` = m.`id_module` AND mc.`id_country` = '.$id_country_ctx.'
@@ -802,11 +824,61 @@ class GooglePayStripe extends PaymentModule
 
     public function hookPayment($params)
     {
-        // Every exit below records why, so the configuration page can say what
-        // happened on the last real checkout instead of the merchant and I
-        // trading screenshots. If the recorded time never moves, the hook was
-        // never called at all and the cause is upstream, in PrestaShop's own
-        // filtering — which is a different problem entirely.
+        return $this->renderButtonBlock('standard');
+    }
+
+    /**
+     * The payment step used when PS_ADVANCED_PAYMENT_API is on — which the
+     * Advanced EU Compliance module switches on for EU shops. That step ignores
+     * the normal payment hook completely and builds its list from PaymentOption
+     * objects instead, so a module that only implements hookPayment is invisible
+     * there with no error anywhere.
+     *
+     * @return array|null array of Core_Business_Payment_PaymentOption
+     */
+    public function hookAdvancedPaymentOptions($params)
+    {
+        $html = $this->renderButtonBlock('advanced');
+        if (!$html) {
+            return null;
+        }
+
+        if (!class_exists('Core_Business_Payment_PaymentOption')) {
+            // Older 1.6.0.x has the setting but not the class. Nothing sensible
+            // to return, and the recorded state says so rather than fataling.
+            return $this->noteHookState(
+                'skipped: this PrestaShop has the advanced payment API on but no PaymentOption class'
+            );
+        }
+
+        $option = new Core_Business_Payment_PaymentOption();
+        $option->setModuleName($this->name)
+               ->setCallToActionText($this->getButtonTitle())
+               ->setLogo(Media::getMediaPath(_PS_MODULE_DIR_.$this->name.'/views/img/googlepay-mark.png'))
+               // The wallet sheet has to be opened by a tap on Google's own
+               // button, so this option carries no submittable form. The JS
+               // lifts the block out of the collapsed container and, if the
+               // shopper uses the page's own confirm button instead, opens the
+               // sheet from that click.
+               ->setForm($html);
+
+        return array($option);
+    }
+
+    /**
+     * Shared by both payment steps.
+     *
+     * Every exit below records why, so the configuration page can say what
+     * happened on the last real checkout instead of the merchant and I trading
+     * screenshots. If the recorded time never moves, the hook was never called
+     * at all and the cause is upstream, in PrestaShop's own filtering — which
+     * is a different problem entirely.
+     *
+     * @param string $layout 'standard' or 'advanced'
+     * @return string|null rendered block, or null with the reason recorded
+     */
+    protected function renderButtonBlock($layout)
+    {
         if (!$this->active) {
             return $this->noteHookState('skipped: the module is disabled');
         }
@@ -837,13 +909,14 @@ class GooglePayStripe extends PaymentModule
             return $this->noteHookState('skipped: cart total is '.(float)$total);
         }
 
-        $this->noteHookState('shown: button block rendered, cart total '.(float)$total);
+        $this->noteHookState(sprintf(
+            'shown: button block rendered on the %s payment step, cart total %s',
+            $layout,
+            (float)$total
+        ));
 
         $currency = new Currency((int)$cart->id_currency);
-        $title = Configuration::get('GPS_TITLE', (int)$this->context->language->id);
-        if (!$title) {
-            $title = $this->t('Pay with Google Pay');
-        }
+        $title = $this->getButtonTitle();
 
         Media::addJsDef(array(
             'gpsConfig' => array(
@@ -864,6 +937,8 @@ class GooglePayStripe extends PaymentModule
                     'generic'    => $this->t('The payment could not be completed. Please try again or choose another payment method.'),
                     'network'    => $this->t('We could not reach the payment server. Please check your connection and try again.'),
                     'processing' => $this->t('Processing your payment, please do not close this page...'),
+                    'terms'      => $this->t('Please accept the terms of service first, then tap the Google Pay button.'),
+                    'tapButton'  => $this->t('Tap the Google Pay button above to complete your payment.'),
                 ),
             ),
         ));
@@ -873,9 +948,36 @@ class GooglePayStripe extends PaymentModule
             'gps_test_mode'   => (bool)Configuration::get('GPS_TEST_MODE'),
             'gps_module_dir'  => $this->_path,
             'gps_error'       => $this->getReturnedError(),
+            // The advanced layout already prints the title and logo in its own
+            // option box, so the block must not repeat them.
+            'gps_advanced'    => ($layout === 'advanced'),
         ));
 
         return $this->display(__FILE__, 'views/templates/hook/payment.tpl');
+    }
+
+    public function getButtonTitle()
+    {
+        $title = Configuration::get('GPS_TITLE', (int)$this->context->language->id);
+
+        return $title ? $title : $this->t('Pay with Google Pay');
+    }
+
+    /**
+     * Registers the advanced payment hook if it is not already attached.
+     * Safe to call repeatedly.
+     */
+    public function ensureAdvancedHook()
+    {
+        if (!$this->id) {
+            return false;
+        }
+
+        if ($this->isRegisteredInHook('advancedPaymentOptions')) {
+            return true;
+        }
+
+        return (bool)$this->registerHook('advancedPaymentOptions');
     }
 
     public function hookPaymentReturn($params)

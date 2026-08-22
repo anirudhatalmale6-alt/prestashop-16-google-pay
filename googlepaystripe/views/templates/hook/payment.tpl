@@ -11,15 +11,24 @@
 	<div class="alert alert-danger gps-alert">{$gps_error|escape:'html':'UTF-8'}</div>
 {/if}
 
-<div class="row" id="gps-block" style="display:none;">
+<div class="row{if $gps_advanced} gps-advanced{/if}" id="gps-block" style="display:none;">
 	<div class="col-xs-12">
 		<div class="payment_module gps-payment-module">
-			<div class="gps-heading">
-				<span class="gps-title">{$gps_title|escape:'html':'UTF-8'}</span>
-				{if $gps_test_mode}
+			{* In the advanced layout PrestaShop has already drawn the title and
+			   the Google Pay logo in the option box above this block, so
+			   repeating them here would just say the same thing twice. *}
+			{if !$gps_advanced}
+				<div class="gps-heading">
+					<span class="gps-title">{$gps_title|escape:'html':'UTF-8'}</span>
+					{if $gps_test_mode}
+						<span class="gps-badge-test">{l s='TEST MODE' mod='googlepaystripe'}</span>
+					{/if}
+				</div>
+			{elseif $gps_test_mode}
+				<div class="gps-heading">
 					<span class="gps-badge-test">{l s='TEST MODE' mod='googlepaystripe'}</span>
-				{/if}
-			</div>
+				</div>
+			{/if}
 
 			<p class="gps-subtitle">
 				{l s='Pay in a couple of taps with the card saved in your Google account. You will be asked to confirm before anything is charged.' mod='googlepaystripe'}
