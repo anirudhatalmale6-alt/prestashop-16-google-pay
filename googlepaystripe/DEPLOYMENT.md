@@ -122,6 +122,31 @@ anyone who found the URL could fake a payment.
 Do this twice: once for your test-mode endpoint and once for live. They have different
 signing secrets.
 
+> ⚠️ **The module stores one signing secret, not a test/live pair** (unlike the API keys).
+> So the secret has to be swapped **at the same moment you flip Test mode**. Leave the test
+> `whsec_` in place after going live and every live webhook is rejected — silently, because
+> a rejected webhook looks identical to no webhook at all. If you switch modes often, ask
+> for the split test/live fields; it is a small change.
+
+---
+
+## 5b. Browser support — and Brave
+
+Google Pay on the web needs the browser's Payment Request API. Where it is unavailable the
+module hides its own payment option entirely: no empty box, no error, other payment methods
+untouched. A shopper simply sees your remaining methods.
+
+| Browser | Google Pay button |
+|---|---|
+| Chrome, Edge, Opera, Samsung Internet (desktop + Android) | Yes |
+| **Brave** | **No — Brave blocks the payment API deliberately, as an anti-tracking measure** |
+| Firefox, Safari | Not for Google Pay |
+| Any browser over plain http | No — the API requires https |
+
+Brave is **not a fault and cannot be fixed from the shop side**; it is the visitor's browser
+choice. Verified by blocking the same API on a test shop: the option box is removed cleanly
+and the rest of the checkout is unaffected.
+
 ---
 
 ## 6. Countries and currencies — the trap that hides the button
