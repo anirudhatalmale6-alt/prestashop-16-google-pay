@@ -143,6 +143,56 @@ To check or fix:
 If the button is missing at checkout and everything else looks right, this is the first
 place to look.
 
+### Devices
+
+`module_shop.enable_device` is a bitmask — 1 desktop, 2 tablet, 4 mobile — ANDed against
+the shopper's device. Clear the mobile bit and the module is invisible **on phones only**,
+which reads as a browser fault rather than a setting. Google Pay is mostly used on phones,
+so this one matters. The status panel checks all three.
+
+---
+
+## 6b. The two payment steps — the trap that hid the button on the live shop
+
+PrestaShop 1.6.1 ships **two different payment steps**, and they call different hooks.
+
+| Setting | Template | Hook executed |
+|---|---|---|
+| `PS_ADVANCED_PAYMENT_API = 0` | `order-payment-classic.tpl` | `displayPayment` |
+| `PS_ADVANCED_PAYMENT_API = 1` | `order-payment-advanced.tpl` | `advancedPaymentOptions` |
+
+With the advanced step on, `displayPayment` is **never executed at all**. A module that
+implements only `hookPayment` is therefore invisible, silently — every country, group,
+currency and hook check can pass while the module is never asked anything.
+
+You can recognise the advanced step on sight: payment methods drawn as boxes with logos
+side by side, the delivery and invoice addresses repeated below them, and a single confirm
+button (usually "Order With Obligation To Pay") instead of each method being its own link.
+
+**It is normally switched on by the Advanced EU Compliance module**, which EU shops need for
+the legally required wording and terms checkbox. Do not turn it off to make a payment module
+appear — that removes compliance wording from a live checkout.
+
+This module implements **both** hooks (since 1.0.3), so it works either way and keeps working
+if the setting is ever changed.
+
+Worth knowing: stock PrestaShop's own `bankwire` and `cheque` modules do **not** implement
+the advanced hook. On a clean 1.6.1.24 with the setting on and no EU compliance module
+installed, the payment step shows *"Unable to find any available payment option for your
+cart"*. That is a PrestaShop limitation, not a fault in your shop.
+
+### How the module behaves in the advanced step
+
+- It supplies a payment option box with the Google Pay logo, like any other method.
+- That step keeps each option's form hidden and submits it from the page's confirm button.
+  A wallet cannot work that way — the sheet must open from a tap on Google's own button —
+  so the module opens its own container. No theme file is modified.
+- If the shopper selects Google Pay and presses the page's confirm button, the module says
+  to tap the Google Pay button instead of letting the theme show a bare failure alert.
+- The terms checkbox is enforced before the wallet opens.
+- If the browser cannot do Google Pay, the whole option box is removed, so nobody is offered
+  a payment method that does nothing.
+
 ---
 
 ## 7. Testing
@@ -198,10 +248,14 @@ returns for display purposes.
 ## 9. Upgrades and theme changes
 
 - **No PrestaShop core file is modified.** Everything lives inside `/modules/googlepaystripe/`.
-- **No theme file is modified.** The button is injected through the standard `payment`
-  hook, so it survives a theme change. If you switch to a theme that heavily rewrites the
-  checkout, re-check the payment step visually — the styling may want a tweak, but nothing
-  will break.
+- **No theme file is modified.** The button is injected through PrestaShop's own payment
+  hooks — `payment` for the classic step, `advancedPaymentOptions` for the advanced one — so
+  it survives a theme change. If you switch to a theme that heavily rewrites the checkout,
+  re-check the payment step visually — the styling may want a tweak, but nothing will break.
+- **Upgrading by re-uploading the zip does not re-run `install()`.** Anything that has to
+  happen on an existing install belongs in `upgrade/upgrade-X.Y.Z.php`. That is how 1.0.3
+  attaches the advanced hook to shops that were already running an earlier version, with no
+  reinstall and without losing keys or restrictions.
 - Upgrading within 1.6.x is safe. Moving to PrestaShop 1.7 or 8 is **not** — those use a
   completely different payment API and would need the module rewritten.
 - If you upgrade PHP past 7.4, the bundled Stripe library must be swapped for a newer
@@ -217,7 +271,8 @@ staging site at live keys.
 
 | Symptom | Cause to check first |
 |---|---|
-| Button never appears | Site not fully https; or country/currency restriction (section 6); or the browser genuinely has no Google Pay |
+| Button never appears | Site not fully https; or country/currency/device restriction (section 6); or the advanced payment step with the module not attached to `advancedPaymentOptions` (section 6b); or the browser genuinely has no Google Pay |
+| Every status check green, still no button | Read **Last checkout result** at the bottom of the status panel. A fresh "shown" means the shop did its job and the cause is in the browser. A fresh "skipped" names the reason. A timestamp that never moves means the payment step never called the module at all — look at section 6b first |
 | Button appears, payment fails immediately | Wrong or revoked Stripe key. Re-save the config — it verifies the key and reports the error |
 | Payment taken, no order | Webhook not configured. Set it up (section 5); Stripe will retry and the order will be created |
 | Order stuck in "Payment error" | Cart total changed between quote and charge. Compare the Stripe amount against the order and decide before shipping |
