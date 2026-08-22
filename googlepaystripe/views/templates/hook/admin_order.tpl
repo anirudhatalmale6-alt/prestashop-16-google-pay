@@ -30,7 +30,10 @@
 			</tr>
 			<tr>
 				<td><strong>{l s='Amount' mod='googlepaystripe'}</strong></td>
-				<td>{$gps_payment.amount|escape:'html':'UTF-8'} {$gps_payment.currency|escape:'html':'UTF-8'}</td>
+				{* The column is DECIMAL(20,6), so the raw value reads
+				   "1.220000 EUR". The stored figure is exact and unchanged —
+				   this only affects how it is displayed. *}
+				<td>{$gps_amount_display|escape:'html':'UTF-8'}</td>
 			</tr>
 			{if $gps_payment.card_brand}
 				<tr>

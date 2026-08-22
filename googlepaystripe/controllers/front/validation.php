@@ -45,7 +45,12 @@ class GooglePayStripeValidationModuleFrontController extends ModuleFrontControll
 
         try {
             $stripe = $module->getStripeClient();
-            $intent = $stripe->paymentIntents->retrieve($intent_id, array());
+            // Expanding the charge saves a second API call on the happy path;
+            // extractCardDetails() still fetches it separately if this ever
+            // comes back as a bare id.
+            $intent = $stripe->paymentIntents->retrieve($intent_id, array(
+                'expand' => array('latest_charge'),
+            ));
         } catch (Exception $e) {
             $module->log('Could not retrieve intent '.$intent_id.': '.$e->getMessage(), 3);
             $this->failTo(GooglePayStripe::ERR_UNREACHABLE);

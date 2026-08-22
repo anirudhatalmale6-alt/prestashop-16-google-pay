@@ -169,6 +169,27 @@ class GooglePayStripePaymentProcessor
     }
 
     /**
+     * Fetches a charge by id when the intent only carried a reference.
+     *
+     * Never fatal: the card brand is a display convenience, so a failure here
+     * must not stop an order being created for a payment that succeeded.
+     *
+     * @return \Stripe\Charge|null
+     */
+    protected function retrieveCharge($charge_id)
+    {
+        try {
+            $stripe = $this->module->getStripeClient();
+
+            return $stripe->charges->retrieve($charge_id, array());
+        } catch (Exception $e) {
+            $this->module->log('Could not retrieve charge '.$charge_id.': '.$e->getMessage(), 2);
+
+            return null;
+        }
+    }
+
+    /**
      * Pulls the readable bits out of the intent so the merchant can see what
      * was actually used, without ever storing a card number.
      */
@@ -203,7 +224,15 @@ class GooglePayStripePaymentProcessor
         $out['charge_id'] = is_string($charge) ? $charge : (isset($charge->id) ? $charge->id : '');
 
         if (is_string($charge)) {
-            return $out;
+            // Newer Stripe API versions drop the `charges` list and return
+            // `latest_charge` as a bare id, so the card details are simply not
+            // in the intent. Without this the back office showed the charge id
+            // but no brand or last 4 — which is exactly what happened on the
+            // first live order. Fetch the charge rather than lose them.
+            $charge = $this->retrieveCharge($charge);
+            if (!$charge) {
+                return $out;
+            }
         }
 
         if (isset($charge->payment_method_details) && isset($charge->payment_method_details->card)) {

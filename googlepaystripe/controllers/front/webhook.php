@@ -32,7 +32,7 @@ class GooglePayStripeWebhookModuleFrontController extends ModuleFrontController
         // cURL for anything URL-shaped and would not give us the request body.
         $payload = file_get_contents('php://input');
         $signature = isset($_SERVER['HTTP_STRIPE_SIGNATURE']) ? $_SERVER['HTTP_STRIPE_SIGNATURE'] : '';
-        $secret = Configuration::get('GPS_WEBHOOK_SECRET');
+        $secret = $module->getWebhookSecret();
 
         if (!$payload) {
             $this->finish(400, 'Empty payload.');

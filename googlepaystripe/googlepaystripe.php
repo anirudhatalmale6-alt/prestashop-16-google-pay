@@ -46,6 +46,12 @@ class GooglePayStripe extends PaymentModule
         'GPS_TEST_SECRET'         => '',
         'GPS_LIVE_PUBLISHABLE'    => '',
         'GPS_LIVE_SECRET'         => '',
+        // One signing secret per mode. Stripe issues a different secret for the
+        // test and live endpoints, and a mismatched one is rejected silently —
+        // the endpoint answers 400 and the merchant sees nothing at all.
+        'GPS_TEST_WEBHOOK_SECRET' => '',
+        'GPS_LIVE_WEBHOOK_SECRET' => '',
+        // Kept for shops upgrading from <= 1.0.4, which stored a single secret.
         'GPS_WEBHOOK_SECRET'      => '',
         'GPS_MERCHANT_COUNTRY'    => '',
         'GPS_BUTTON_TYPE'         => 'buy',
@@ -62,7 +68,7 @@ class GooglePayStripe extends PaymentModule
     {
         $this->name = 'googlepaystripe';
         $this->tab = 'payments_gateways';
-        $this->version = '1.0.4';
+        $this->version = '1.0.5';
         $this->author = 'Anirudha Talmale';
         // Must be 1 for a payment module. With 0, Module::getModulesOnDisk()
         // builds the object straight from config.xml, which carries no
@@ -248,7 +254,16 @@ class GooglePayStripe extends PaymentModule
         Configuration::updateValue('GPS_TEST_SECRET', $test_sk);
         Configuration::updateValue('GPS_LIVE_PUBLISHABLE', $live_pk);
         Configuration::updateValue('GPS_LIVE_SECRET', $live_sk);
-        Configuration::updateValue('GPS_WEBHOOK_SECRET', trim(Tools::getValue('GPS_WEBHOOK_SECRET')));
+        $test_whsec = trim(Tools::getValue('GPS_TEST_WEBHOOK_SECRET'));
+        $live_whsec = trim(Tools::getValue('GPS_LIVE_WEBHOOK_SECRET'));
+        Configuration::updateValue('GPS_TEST_WEBHOOK_SECRET', $test_whsec);
+        Configuration::updateValue('GPS_LIVE_WEBHOOK_SECRET', $live_whsec);
+
+        // Once a mode-specific secret exists the shared pre-1.0.5 value is only
+        // a source of confusion — it would keep answering for the other mode.
+        if ($test_whsec !== '' || $live_whsec !== '') {
+            Configuration::updateValue('GPS_WEBHOOK_SECRET', '');
+        }
         Configuration::updateValue('GPS_MERCHANT_COUNTRY', $country);
         Configuration::updateValue('GPS_BUTTON_TYPE', Tools::getValue('GPS_BUTTON_TYPE'));
         Configuration::updateValue('GPS_BUTTON_THEME', Tools::getValue('GPS_BUTTON_THEME'));
@@ -320,13 +335,33 @@ class GooglePayStripe extends PaymentModule
             'hint'  => $this->t('Both the publishable and secret key are needed for the mode you selected.'),
         );
 
-        $checks[] = array(
-            'label' => $this->t('Webhook signing secret'),
-            // Configuration::get() returns false when unset, which is not '' —
-            // compare truthiness or the check always passes.
-            'ok'    => (bool)Configuration::get('GPS_WEBHOOK_SECRET'),
-            'hint'  => $this->t('Optional but recommended. It lets Stripe confirm an order even if the customer closes the browser.'),
-        );
+        // A signing secret from the wrong environment is the worst kind of
+        // wrong: Stripe answers 400 and nothing surfaces in the shop, so the
+        // safety net is off and looks on. Say which mode the secret belongs to.
+        $mode_word = $this->isTestMode() ? $this->t('test') : $this->t('live');
+
+        if ($this->isWebhookSecretAmbiguous()) {
+            $checks[] = array(
+                'label'  => sprintf($this->t('Webhook signing secret for %s mode'), $mode_word),
+                'ok'     => false,
+                'always' => true,
+                'hint'   => sprintf(
+                    $this->t('A signing secret is saved, but from before this module kept one per mode — so it may belong to the other environment. Stripe rejects a mismatched secret with an error you will never see in the shop. Paste the %s endpoint\'s secret into the "%s webhook signing secret" field below.'),
+                    $mode_word,
+                    Tools::ucfirst($mode_word)
+                ),
+            );
+        } else {
+            $has_secret = $this->getWebhookSecret() !== '';
+            $checks[] = array(
+                'label' => sprintf($this->t('Webhook signing secret for %s mode'), $mode_word),
+                'ok'    => $has_secret,
+                'hint'  => sprintf(
+                    $this->t('Optional but recommended. It lets Stripe confirm an order even if the customer closes the browser. Stripe issues a separate secret for %s mode.'),
+                    $mode_word
+                ),
+            );
+        }
 
         // These four are the filters PrestaShop itself applies in
         // Module::getPaymentModules(). If any one of them fails the module is
@@ -676,9 +711,15 @@ class GooglePayStripe extends PaymentModule
                 ),
                 array(
                     'type'  => 'text',
-                    'label' => $this->l('Webhook signing secret'),
-                    'name'  => 'GPS_WEBHOOK_SECRET',
-                    'desc'  => $this->l('Starts with whsec_. Create the endpoint in Stripe first, then paste the secret here.'),
+                    'label' => $this->l('Test webhook signing secret'),
+                    'name'  => 'GPS_TEST_WEBHOOK_SECRET',
+                    'desc'  => $this->l('Starts with whsec_. From the endpoint you created in Stripe with test mode ON.'),
+                ),
+                array(
+                    'type'  => 'text',
+                    'label' => $this->l('Live webhook signing secret'),
+                    'name'  => 'GPS_LIVE_WEBHOOK_SECRET',
+                    'desc'  => $this->l('Starts with whsec_. From a SEPARATE endpoint created in Stripe with test mode OFF. Stripe issues a different secret for live — the test one will be rejected.'),
                 ),
             ),
             'submit' => array('title' => $this->l('Save')),
@@ -793,7 +834,21 @@ class GooglePayStripe extends PaymentModule
             'GPS_TEST_SECRET'      => Tools::getValue('GPS_TEST_SECRET', Configuration::get('GPS_TEST_SECRET')),
             'GPS_LIVE_PUBLISHABLE' => Tools::getValue('GPS_LIVE_PUBLISHABLE', Configuration::get('GPS_LIVE_PUBLISHABLE')),
             'GPS_LIVE_SECRET'      => Tools::getValue('GPS_LIVE_SECRET', Configuration::get('GPS_LIVE_SECRET')),
-            'GPS_WEBHOOK_SECRET'   => Tools::getValue('GPS_WEBHOOK_SECRET', Configuration::get('GPS_WEBHOOK_SECRET')),
+            // Pre-fill an upgraded shop's single secret into the field for the
+            // mode it was almost certainly entered under, so the merchant can
+            // see it rather than retype it blind.
+            'GPS_TEST_WEBHOOK_SECRET' => Tools::getValue(
+                'GPS_TEST_WEBHOOK_SECRET',
+                Configuration::get('GPS_TEST_WEBHOOK_SECRET')
+                    ? Configuration::get('GPS_TEST_WEBHOOK_SECRET')
+                    : ($this->isTestMode() ? Configuration::get('GPS_WEBHOOK_SECRET') : '')
+            ),
+            'GPS_LIVE_WEBHOOK_SECRET' => Tools::getValue(
+                'GPS_LIVE_WEBHOOK_SECRET',
+                Configuration::get('GPS_LIVE_WEBHOOK_SECRET')
+                    ? Configuration::get('GPS_LIVE_WEBHOOK_SECRET')
+                    : ''
+            ),
             'GPS_MERCHANT_COUNTRY' => Tools::getValue('GPS_MERCHANT_COUNTRY', Configuration::get('GPS_MERCHANT_COUNTRY')),
             'GPS_BUTTON_TYPE'      => Tools::getValue('GPS_BUTTON_TYPE', Configuration::get('GPS_BUTTON_TYPE')),
             'GPS_BUTTON_THEME'     => Tools::getValue('GPS_BUTTON_THEME', Configuration::get('GPS_BUTTON_THEME')),
@@ -956,6 +1011,60 @@ class GooglePayStripe extends PaymentModule
         return $this->display(__FILE__, 'views/templates/hook/payment.tpl');
     }
 
+    /**
+     * Renders a stored amount the way the merchant expects to see money.
+     *
+     * The column is DECIMAL(20,6) because that is what PrestaShop uses for
+     * money, so the raw value prints as "1.220000". Falls back to a plain
+     * two-decimal figure if the currency is not one the shop knows.
+     */
+    /**
+     * The signing secret for the mode the module is currently running in.
+     *
+     * Falls back to the single pre-1.0.5 secret so an upgrade never silently
+     * turns a working webhook off. Once the merchant saves a mode-specific
+     * secret, that one wins.
+     */
+    public function getWebhookSecret()
+    {
+        $key = $this->isTestMode() ? 'GPS_TEST_WEBHOOK_SECRET' : 'GPS_LIVE_WEBHOOK_SECRET';
+        $secret = trim((string)Configuration::get($key));
+
+        if ($secret !== '') {
+            return $secret;
+        }
+
+        return trim((string)Configuration::get('GPS_WEBHOOK_SECRET'));
+    }
+
+    /**
+     * True when the only secret available is the shared pre-1.0.5 one.
+     *
+     * That value was entered for whichever mode was active at the time, so
+     * after a mode switch it is very likely the wrong environment's secret —
+     * which Stripe reports only as a failed delivery.
+     */
+    public function isWebhookSecretAmbiguous()
+    {
+        $key = $this->isTestMode() ? 'GPS_TEST_WEBHOOK_SECRET' : 'GPS_LIVE_WEBHOOK_SECRET';
+
+        return trim((string)Configuration::get($key)) === ''
+            && trim((string)Configuration::get('GPS_WEBHOOK_SECRET')) !== '';
+    }
+
+    public function formatStoredAmount($amount, $currency_iso)
+    {
+        $id_currency = (int)Currency::getIdByIsoCode($currency_iso);
+
+        if ($id_currency) {
+            // displayPrice applies the shop's own separators and symbol
+            // placement, so it matches every other amount in the back office.
+            return Tools::displayPrice((float)$amount, $id_currency);
+        }
+
+        return number_format((float)$amount, 2, '.', '').' '.$currency_iso;
+    }
+
     public function getButtonTitle()
     {
         $title = Configuration::get('GPS_TITLE', (int)$this->context->language->id);
@@ -1021,8 +1130,9 @@ class GooglePayStripe extends PaymentModule
         $base = $row['live_mode'] ? 'https://dashboard.stripe.com/payments/' : 'https://dashboard.stripe.com/test/payments/';
 
         $this->context->smarty->assign(array(
-            'gps_payment'       => $row,
-            'gps_dashboard_url' => $base.$row['payment_intent_id'],
+            'gps_payment'        => $row,
+            'gps_dashboard_url'  => $base.$row['payment_intent_id'],
+            'gps_amount_display' => $this->formatStoredAmount($row['amount'], $row['currency']),
         ));
 
         return $this->display(__FILE__, 'views/templates/hook/admin_order.tpl');
