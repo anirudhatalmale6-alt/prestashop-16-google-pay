@@ -62,7 +62,7 @@ class GooglePayStripe extends PaymentModule
     {
         $this->name = 'googlepaystripe';
         $this->tab = 'payments_gateways';
-        $this->version = '1.0.3';
+        $this->version = '1.0.4';
         $this->author = 'Anirudha Talmale';
         // Must be 1 for a payment module. With 0, Module::getModulesOnDisk()
         // builds the object straight from config.xml, which carries no

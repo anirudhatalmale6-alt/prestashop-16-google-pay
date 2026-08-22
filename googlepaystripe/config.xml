@@ -2,7 +2,7 @@
 <module>
 	<name>googlepaystripe</name>
 	<displayName><![CDATA[Google Pay (via Stripe)]]></displayName>
-	<version><![CDATA[1.0.3]]></version>
+	<version><![CDATA[1.0.4]]></version>
 	<description><![CDATA[Adds a Google Pay button to your checkout. Payments are processed by Stripe, so card data never reaches your server.]]></description>
 	<author><![CDATA[Anirudha Talmale]]></author>
 	<tab><![CDATA[payments_gateways]]></tab>
