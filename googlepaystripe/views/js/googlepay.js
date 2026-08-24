@@ -174,23 +174,129 @@
 		xhr.send();
 	}
 
+	/** True when the node, or anything above it, is hidden from the shopper. */
+	function isVisible(node) {
+		while (node && node.nodeType === 1) {
+			var style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+			if (style && (style.display === 'none' || style.visibility === 'hidden')) {
+				return false;
+			}
+			node = node.parentNode;
+		}
+		return true;
+	}
+
 	/**
-	 * Removes the whole option box from the advanced layout.
+	 * Whether this module may hide `node`.
 	 *
-	 * In that layout PrestaShop draws the box server side, before anyone knows
-	 * whether this browser can pay. If it turns out it cannot, leaving the box
-	 * there would offer a payment method that does nothing when tapped.
+	 * Everything on the payment step except this module's own block was put
+	 * there by PrestaShop, the theme, or another module. Hiding any of it can
+	 * take away something the shopper needs in order to buy at all — the terms
+	 * checkbox, the confirm button, somebody else's payment method — and a
+	 * checkout that cannot be completed is far worse than a Google Pay button
+	 * that is not offered. So nothing is hidden without checking first.
+	 */
+	function safeToHide(node) {
+		if (!node || node.nodeType !== 1) {
+			return false;
+		}
+
+		// Controls the order cannot be placed without.
+		var required = ['cgv', 'revocation_vp_terms_agreed', 'confirmOrder'];
+		for (var i = 0; i < required.length; i++) {
+			var control = el(required[i]);
+			if (!control) {
+				continue;
+			}
+			if (node === control || (node.contains && node.contains(control))) {
+				return false;
+			}
+		}
+
+		// Another payment method's markup.
+		if (node.querySelectorAll) {
+			var forms = node.querySelectorAll('.payment_option_form');
+			for (i = 0; i < forms.length; i++) {
+				if (forms[i] !== state.optionForm) {
+					return false;
+				}
+			}
+			var boxes = node.querySelectorAll('p.payment_module');
+			for (i = 0; i < boxes.length; i++) {
+				if (boxes[i] !== state.optionBox) {
+					return false;
+				}
+			}
+		}
+
+		return true;
+	}
+
+	/** True when every element inside `node` was drawn for this option. */
+	function holdsOnlyThisOption(node) {
+		if (!node || node.nodeType !== 1 || !node.children || !node.children.length) {
+			return false;
+		}
+		for (var i = 0; i < node.children.length; i++) {
+			var child = node.children[i];
+			if (child !== state.optionBox && child !== state.optionForm) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Withdraws the Google Pay option from the advanced layout.
+	 *
+	 * PrestaShop draws the option box server side, before anyone knows whether
+	 * this browser can pay. When it turns out it cannot, leaving the box there
+	 * would offer a payment method that does nothing when tapped.
+	 *
+	 * Only the two elements PrestaShop drew for THIS option are hidden. An
+	 * earlier version hid their parent column instead, which is fine on the
+	 * stock theme, where that column holds nothing else — and silently fatal on
+	 * any theme that puts something a shopper needs in the same container.
+	 * The empty column is left behind on purpose: a gap in the grid is a
+	 * cosmetic problem, and it is the only cost that is bounded.
 	 */
 	function hideOption() {
 		if (!state.optionForm) {
 			return;
 		}
-		var column = state.optionForm.parentNode;
-		if (column && column.nodeType === 1) {
-			column.style.display = 'none';
-		} else {
+
+		if (safeToHide(state.optionForm)) {
 			state.optionForm.style.display = 'none';
 		}
+
+		if (state.optionBox && safeToHide(state.optionBox)) {
+			state.optionBox.style.display = 'none';
+
+			// The shopper may already have picked this option before Stripe
+			// came back. Left selected, the theme would keep treating a method
+			// that is no longer on the page as their choice, and the confirm
+			// guard below would go on intercepting the button forever.
+			releaseSelection();
+		}
+
+		var column = state.optionForm.parentNode;
+		if (holdsOnlyThisOption(column) && safeToHide(column)) {
+			column.style.display = 'none';
+		}
+	}
+
+	/** Hands the theme's payment selection back, if this option held it. */
+	function releaseSelection() {
+		if (!state.optionBox || !hasClass(state.optionBox, 'payment_selected')) {
+			return;
+		}
+		state.optionBox.className = (' ' + state.optionBox.className + ' ')
+			.replace(' payment_selected ', ' ')
+			.replace(/^\s+|\s+$/g, '');
+
+		// The theme tracks the selection in its own handler object, which is
+		// not reachable from here. Clearing the class is what its own code
+		// tests, so a later click on another method still behaves normally.
 	}
 
 	/**
@@ -213,6 +319,15 @@
 			// handle the click exactly as it normally would.
 			var button = ancestorWithId(ev.target, 'confirmOrder');
 			if (!button || !hasClass(state.optionBox, 'payment_selected')) {
+				return;
+			}
+
+			// The block is gone: this browser turned out not to support Google
+			// Pay, or the button never mounted. Swallowing the click here would
+			// leave the shopper pressing a confirm button that does nothing and
+			// says nothing, because the message would be written into a hidden
+			// element. Stand aside and let the theme speak.
+			if (!state.mounted || !isVisible(el('gps-block'))) {
 				return;
 			}
 

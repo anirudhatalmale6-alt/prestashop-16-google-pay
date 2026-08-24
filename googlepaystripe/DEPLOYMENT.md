@@ -302,6 +302,17 @@ staging site at live keys.
 | Payment taken, no order | Webhook not configured. Set it up (section 5); Stripe will retry and the order will be created |
 | Order stuck in "Payment error" | Cart total changed between quote and charge. Compare the Stripe amount against the order and decide before shipping |
 | "The payment provider refused the request" in the browser console | The server could not reach Stripe. Check outbound HTTPS is not blocked by the host firewall |
+| Terms of service checkbox missing, no order can be placed by any method | Disable this module first: if the checkbox comes back it is the module, and you need 1.0.6 or later (see below). If it does not, the checkbox is not being printed at all — check **Preferences → Orders → Terms of service** has a CMS page selected, and that the page still exists and is enabled for the shop's language. The theme's own script blocks the order whenever that checkbox is absent, so the shopper sees a message they have no way to satisfy |
+
+Up to 1.0.5, when a shopper's browser could not do Google Pay the module
+withdrew its option by hiding the grid column the option sits in. On the stock
+theme that column holds nothing but the option itself. On a theme that puts
+anything else in the same container — the terms checkbox being the dangerous
+case — hiding the column took that with it, and the shop could no longer accept
+an order by any payment method. Since 1.0.6 the module hides only the two
+elements PrestaShop drew for its own option, checks before hiding each one, and
+never touches a container it did not create.
+
 
 Turn on **Debug log** in the module configuration to write each payment step to
 **Advanced Parameters → Logs**. Turn it back off once live.
